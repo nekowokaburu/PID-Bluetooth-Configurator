@@ -17,19 +17,21 @@
 #include <Adafruit_MAX31865.h>
 #include <PID_v1.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 // PINS
 constexpr const int BOOILER_TEMP_PIN = 10; // CS/SS
 constexpr const int BOILER_SSR_PIN = 2;
 
 // Global variables
-double KP       = 0;
-double KI       = 0;
-double KD       = 0;
-double SETPOINT = 0;
+double KP                       = 160;//60.16;//16.16;//150;
+double KI                       = 0;//2;//0.14;//0;
+double KD                       = 180;//600;//280.10;//480.10;//0;
+constexpr const int WINDOW_SIZE = 2000;//2000;//5000;
+double SETPOINT = 95;
 
 double CURRENT_TEMP = 0.0;
+const constexpr double MAX_TEMP = 110; // max allowed temp on PID computation
 
 
 // Use software SPI: CS, DI, DO, CLK
@@ -44,7 +46,6 @@ Adafruit_MAX31865 thermo = Adafruit_MAX31865(BOOILER_TEMP_PIN);
 #define RNOMINAL  1000.0
 
 
-constexpr const int WINDOW_SIZE = 5000;
 unsigned long WINDOW_START_TIME;
 double PID_OUTPUT = 0;
 
@@ -66,11 +67,11 @@ void setup()
     pinMode(BOILER_SSR_PIN, OUTPUT);
     digitalWrite(BOILER_SSR_PIN, HIGH);  // Enable boiler heater when machine is turned on (Arduino running)
 
-    // Load presure values from EEPROM
-    KP       = static_cast<double>(EEPROM.read(0));
-    KI       = static_cast<double>(EEPROM.read(1));
-    KD       = static_cast<double>(EEPROM.read(2));
-    SETPOINT = static_cast<double>(EEPROM.read(3));
+    // // Load presure values from EEPROM
+    // KP       = static_cast<double>(EEPROM.read(0));
+    // KI       = static_cast<double>(EEPROM.read(1));
+    // KD       = static_cast<double>(EEPROM.read(2));
+    // SETPOINT = static_cast<double>(EEPROM.read(3));
 
     WINDOW_START_TIME = millis();
 
@@ -114,18 +115,21 @@ void loop()
         if (received_message.startsWith("p"))
         {
             KP = received_message.substring(1).toDouble();
+            myPID.SetTunings(KP, KI, KD);
             Serial.println(String("p") + KP);
         }
 
         if (received_message.startsWith("i"))
         {
             KI = received_message.substring(1).toDouble();
+            myPID.SetTunings(KP, KI, KD);
             Serial.println(String("i") + KI);
         }
 
         if (received_message.startsWith("d"))
         {
             KD = received_message.substring(1).toDouble();
+            myPID.SetTunings(KP, KI, KD);
             Serial.println(String("d") + KD);
         }
 
@@ -144,6 +148,7 @@ void loop()
 
     UpdateTemperature();
     Boiler();
+    Serial.print(String(" ") + SETPOINT + " ");
 }
 
 //************************** Global functions *********************************************************************
@@ -152,29 +157,35 @@ void UpdateTemperature()
 {
     // Read PT1000 here
     CURRENT_TEMP = thermo.temperature(RNOMINAL, RREF);
-    Serial.println(String("c") + CURRENT_TEMP);
+    // Serial.println(String("c") + CURRENT_TEMP);
     // Serial.println(String("c") + CURRENT_TEMP++);
+    Serial.println(CURRENT_TEMP);
 }
 
 // Run boiler heater
 void Boiler(void)
 {
-    myPID.Compute();
     if (millis() - WINDOW_START_TIME > WINDOW_SIZE)
     {
         WINDOW_START_TIME += WINDOW_SIZE;
     }
-
-    if (PID_OUTPUT < millis() - WINDOW_START_TIME)
+    if(DEBUG)
+        Serial.println(String("PIDOUT: ") + PID_OUTPUT);
+    if(myPID.Compute() && CURRENT_TEMP < MAX_TEMP)
     {
-        digitalWrite(BOILER_SSR_PIN, HIGH);
-        Serial.println("o1");
+        if (PID_OUTPUT < millis() - WINDOW_START_TIME)
+        {
+            digitalWrite(BOILER_SSR_PIN, LOW);
+            Serial.print("o0 ");
+        }
+        else
+        {
+            digitalWrite(BOILER_SSR_PIN, HIGH);
+             Serial.print("o1 ");
+        }
     }
-    else
-    {
+    else if (CURRENT_TEMP >= MAX_TEMP)
         digitalWrite(BOILER_SSR_PIN, LOW);
-        Serial.println("o0");
-    }
 }
 
 // Update App parameteres on startup or after parameter change
